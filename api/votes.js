@@ -6,7 +6,6 @@ const agent = new https.Agent({
     rejectUnauthorized: false
 });
 
-// Cache state in serverless execution memory
 let votesCache = {
     data: null,
     timestamp: 0,
@@ -99,29 +98,33 @@ function handleFetchError(err, callback) {
 }
 
 module.exports = (req, res) => {
-    // Enable CORS for Vercel function endpoints
-    res.setHeader('Access-Control-Allow-Credentials', true);
+    // Set CORS headers manually
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-    );
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
-        res.status(200).end();
+        res.writeHead(200);
+        res.end();
         return;
     }
 
-    fetchSheetVotes(SHEET_URL, (err, votes, isCached) => {
-        res.status(200).json({
-            ...votes,
-            _metadata: {
-                cached: isCached,
-                timestamp: votesCache.timestamp,
-                expiresAt: votesCache.timestamp + votesCache.ttl,
-                ttlRemaining: Math.max(0, Math.round((votesCache.timestamp + votesCache.ttl - Date.now()) / 1000))
-            }
+    try {
+        fetchSheetVotes(SHEET_URL, (err, votes, isCached) => {
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=UTF-8' });
+            res.end(JSON.stringify({
+                ...votes,
+                _metadata: {
+                    cached: isCached,
+                    timestamp: votesCache.timestamp,
+                    expiresAt: votesCache.timestamp + votesCache.ttl,
+                    ttlRemaining: Math.max(0, Math.round((votesCache.timestamp + votesCache.ttl - Date.now()) / 1000))
+                }
+            }));
         });
-    });
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=UTF-8' });
+        res.end(JSON.stringify({ result: "error", error: error.toString() }));
+    }
 };

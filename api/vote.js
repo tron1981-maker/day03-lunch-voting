@@ -69,46 +69,87 @@ function submitVoteToGas(targetUrl, menu, callback) {
     req.end();
 }
 
+function parseRequestBody(req, callback) {
+    if (req.body && typeof req.body === 'object') {
+        callback(null, req.body);
+        return;
+    }
+    if (req.body && typeof req.body === 'string') {
+        try {
+            callback(null, JSON.parse(req.body));
+        } catch (e) {
+            callback(e);
+        }
+        return;
+    }
+
+    let body = '';
+    req.on('data', chunk => {
+        body += chunk.toString();
+    });
+    req.on('end', () => {
+        try {
+            callback(null, body ? JSON.parse(body) : {});
+        } catch (e) {
+            callback(e);
+        }
+    });
+}
+
 module.exports = (req, res) => {
-    // Enable CORS for Vercel function endpoints
-    res.setHeader('Access-Control-Allow-Credentials', true);
+    // Set CORS headers manually
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-    );
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
-        res.status(200).end();
+        res.writeHead(200);
+        res.end();
         return;
     }
 
     if (req.method !== 'POST') {
-        res.status(405).json({ result: "error", error: "Method Not Allowed" });
+        res.writeHead(405, { 'Content-Type': 'application/json; charset=UTF-8' });
+        res.end(JSON.stringify({ result: "error", error: "Method Not Allowed" }));
         return;
     }
 
-    const { menu } = req.body;
-    
-    if (!menu || !ALLOWED_MENUS.includes(menu)) {
-        res.status(400).json({ result: "error", error: "Invalid menu choice" });
-        return;
-    }
-
-    if (GAS_WEBAPP_URL) {
-        submitVoteToGas(GAS_WEBAPP_URL, menu, (err, result) => {
+    try {
+        parseRequestBody(req, (err, body) => {
             if (err) {
-                console.error('[Google Write Error] GAS write failed:', err.message);
-                res.status(500).json({ result: "error", error: err.message });
+                res.writeHead(400, { 'Content-Type': 'application/json; charset=UTF-8' });
+                res.end(JSON.stringify({ result: "error", error: "Invalid JSON body" }));
+                return;
+            }
+
+            const menu = body.menu;
+            if (!menu || !ALLOWED_MENUS.includes(menu)) {
+                res.writeHead(400, { 'Content-Type': 'application/json; charset=UTF-8' });
+                res.end(JSON.stringify({ result: "error", error: "Invalid menu choice" }));
+                return;
+            }
+
+            if (GAS_WEBAPP_URL) {
+                submitVoteToGas(GAS_WEBAPP_URL, menu, (gasErr, result) => {
+                    if (gasErr) {
+                        res.writeHead(500, { 'Content-Type': 'application/json; charset=UTF-8' });
+                        res.end(JSON.stringify({ result: "error", error: gasErr.message }));
+                    } else {
+                        res.writeHead(200, { 'Content-Type': 'application/json; charset=UTF-8' });
+                        res.end(JSON.stringify({ result: "success", data: result }));
+                    }
+                });
             } else {
-                res.status(200).json({ result: "success", data: result });
+                res.writeHead(200, { 'Content-Type': 'application/json; charset=UTF-8' });
+                res.end(JSON.stringify({ 
+                    result: "local", 
+                    message: "GAS WebApp URL이 설정되지 않아 로컬 브라우저에 임시 기록되었습니다." 
+                }));
             }
         });
-    } else {
-        res.status(200).json({ 
-            result: "local", 
-            message: "GAS WebApp URL이 설정되지 않아 로컬 브라우저에 임시 기록되었습니다." 
-        });
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=UTF-8' });
+        res.end(JSON.stringify({ result: "error", error: error.toString() }));
     }
 };
