@@ -1,0 +1,9 @@
+# Windows system files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Node / JS
+node_modules/
+.npm
+*.log
