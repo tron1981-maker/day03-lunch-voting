@@ -4,7 +4,7 @@ const path = require('path');
 const https = require('https');
 const PORT = 8080;
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1apyIElF6YvBms3pTIYSf2jI1nk1cAv5OVG6GwtBjRps/export?format=csv';
-const GAS_WEBAPP_URL = ''; // Paste your Google Apps Script Web App URL here after deploying
+const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbzxrZlaLHXQkvWN7E5UfLphgdpGG_08t6xnyHC-jqm-nGG4xLAKwzEiaLL1gsag268J/exec';
 
 const agent = new https.Agent({
     rejectUnauthorized: false
