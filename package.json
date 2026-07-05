@@ -3,11 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "description": "Real-time lunch menu voting screen with Google Sheets database",
-  "type": "module",
   "scripts": {
     "dev": "node server.js"
   },
   "engines": {
-    "node": "20.x"
+    "node": "18.x"
   }
 }
