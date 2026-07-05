@@ -1,4 +1,4 @@
-const https = require('https');
+import https from 'https';
 
 const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbzxrZlaLHXQkvWN7E5UfLphgdpGG_08t6xnyHC-jqm-nGG4xLAKwzEiaLL1gsag268J/exec';
 
@@ -106,7 +106,7 @@ function parseRequestBody(req, callback) {
     });
 }
 
-module.exports = (req, res) => {
+export default function handler(req, res) {
     // Set CORS headers
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -163,4 +163,4 @@ module.exports = (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json; charset=UTF-8' });
         res.end(JSON.stringify({ result: "error", error: error.toString() }));
     }
-};
+}

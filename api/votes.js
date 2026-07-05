@@ -1,4 +1,4 @@
-const https = require('https');
+import https from 'https';
 
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1apyIElF6YvBms3pTIYSf2jI1nk1cAv5OVG6GwtBjRps/export?format=csv';
 
@@ -30,11 +30,16 @@ function fetchSheetVotes(targetUrl, callback) {
             try {
                 const location = res.headers.location;
                 if (typeof location === 'string') {
-                    const redirectUrl = new URL(location, targetUrl).href;
-                    console.log(`[Serverless Redirect] Following redirect to: ${redirectUrl}`);
-                    fetchSheetVotes(redirectUrl, callback);
+                    // Safety check: only follow redirects to Google domains to avoid loops
+                    if (location.includes('google.com') || location.includes('googleusercontent.com')) {
+                        const redirectUrl = new URL(location, targetUrl).href;
+                        console.log(`[Serverless Redirect] Following redirect to: ${redirectUrl}`);
+                        fetchSheetVotes(redirectUrl, callback);
+                    } else {
+                        handleFetchError(new Error(`Untrusted redirect URL: ${location}`), callback);
+                    }
                 } else {
-                    handleFetchError(new Error('Redirect location header missing'), callback);
+                    handleFetchError(new Error('Redirect location missing'), callback);
                 }
             } catch (e) {
                 handleFetchError(e, callback);
@@ -115,7 +120,7 @@ function handleFetchError(err, callback) {
     }
 }
 
-module.exports = (req, res) => {
+export default function handler(req, res) {
     // Set CORS headers
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -146,4 +151,4 @@ module.exports = (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json; charset=UTF-8' });
         res.end(JSON.stringify({ result: "error", error: error.toString() }));
     }
-};
+}

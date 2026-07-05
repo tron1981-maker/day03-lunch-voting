@@ -1,7 +1,12 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const https = require('https');
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import https from 'https';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const PORT = 8080;
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1apyIElF6YvBms3pTIYSf2jI1nk1cAv5OVG6GwtBjRps/export?format=csv';
 const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbzxrZlaLHXQkvWN7E5UfLphgdpGG_08t6xnyHC-jqm-nGG4xLAKwzEiaLL1gsag268J/exec';
@@ -9,6 +14,7 @@ const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbzxrZlaLHXQkvWN7
 const agent = new https.Agent({
     rejectUnauthorized: false
 });
+
 // Cache state for Google Sheets API protection (Throttling/Caching Best Practice)
 let votesCache = {
     data: null,
@@ -35,8 +41,18 @@ function fetchSheetVotes(targetUrl, callback) {
         // Handle Google Sheets redirects recursively
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             try {
-                const redirectUrl = new URL(res.headers.location, targetUrl).href;
-                fetchSheetVotes(redirectUrl, callback);
+                const location = res.headers.location;
+                if (typeof location === 'string') {
+                    // Safety check: only follow redirects to Google domains to avoid loops
+                    if (location.includes('google.com') || location.includes('googleusercontent.com')) {
+                        const redirectUrl = new URL(location, targetUrl).href;
+                        fetchSheetVotes(redirectUrl, callback);
+                    } else {
+                        handleFetchError(new Error(`Untrusted redirect URL: ${location}`), callback);
+                    }
+                } else {
+                    handleFetchError(new Error('Redirect location missing'), callback);
+                }
             } catch (e) {
                 handleFetchError(e, callback);
             }
@@ -135,21 +151,26 @@ function submitVoteToGas(targetUrl, menu, callback) {
         // Handle redirect (GAS redirects POST 302, follow as GET is standard for response extraction)
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             try {
-                const redirectUrl = new URL(res.headers.location, targetUrl).href;
-                https.get(redirectUrl, { agent }, (redirectRes) => {
-                    let data = '';
-                    redirectRes.on('data', (chunk) => { data += chunk; });
-                    redirectRes.on('end', () => {
-                        try {
-                            const parsed = JSON.parse(data);
-                            callback(null, parsed);
-                        } catch (e) {
-                            callback(e);
-                        }
+                const location = res.headers.location;
+                if (typeof location === 'string') {
+                    const redirectUrl = new URL(location, targetUrl).href;
+                    https.get(redirectUrl, { agent }, (redirectRes) => {
+                        let data = '';
+                        redirectRes.on('data', (chunk) => { data += chunk; });
+                        redirectRes.on('end', () => {
+                            try {
+                                const parsed = JSON.parse(data);
+                                callback(null, parsed);
+                            } catch (e) {
+                                callback(e);
+                            }
+                        });
+                    }).on('error', (err) => {
+                        callback(err);
                     });
-                }).on('error', (err) => {
-                    callback(err);
-                });
+                } else {
+                    callback(new Error('Redirect location header missing in GAS post'));
+                }
             } catch (e) {
                 callback(e);
             }
@@ -257,6 +278,7 @@ const server = http.createServer((req, res) => {
         });
         return;
     }
+
     let filePath = path.join(__dirname, decodedUrl === '/' ? 'index.html' : decodedUrl);
     
     // Prevent directory traversal
