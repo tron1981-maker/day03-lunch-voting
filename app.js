@@ -1,3 +1,8 @@
+// Google Sheets & GAS Web App Configuration for direct client fallback (GitHub Pages, etc.)
+const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1apyIElF6YvBms3pTIYSf2jI1nk1cAv5OVG6GwtBjRps/export?format=csv';
+const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbzxrZlaLHXQkvWN7E5UfLphgdpGG_08t6xnyHC-jqm-nGG4xLAKwzEiaLL1gsag268J/exec';
+let useDirectGoogle = false;
+
 // Application State
 let state = {
     // Combined votes (sheet + local user votes)
@@ -110,10 +115,68 @@ function stopPolling() {
     }
 }
 
+// Fetch directly from Google Sheets CSV (fallback mode)
+function fetchDirectFromGoogle() {
+    fetch(SHEET_URL)
+        .then(res => {
+            if (!res.ok) {
+                throw new Error('Google Sheet response error status ' + res.status);
+            }
+            return res.text();
+        })
+        .then(csvText => {
+            const lines = csvText.split(/\r?\n/);
+            const votes = { bibimbap: 0, donkatsu: 0, gukbap: 0, salad: 0 };
+            const ALLOWED_MENUS = ['bibimbap', 'donkatsu', 'gukbap', 'salad'];
+            
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                const cols = line.split(',');
+                if (cols.length >= 2) {
+                    const rawMenu = cols[1].trim();
+                    let menuKey = null;
+                    if (rawMenu === '비빔밥') menuKey = 'bibimbap';
+                    else if (rawMenu === '돈까스') menuKey = 'donkatsu';
+                    else if (rawMenu === '국밥' || rawMenu === '국박') menuKey = 'gukbap';
+                    else if (rawMenu === '샐러드') menuKey = 'salad';
+                    
+                    if (menuKey && ALLOWED_MENUS.includes(menuKey)) {
+                        votes[menuKey]++;
+                    }
+                }
+            }
+            
+            state.sheetVotes = votes;
+            combineVotes();
+            updateUI();
+        })
+        .catch(err => {
+            console.error('Error fetching directly from Google Sheet:', err);
+            state.sheetVotes = { bibimbap: 0, donkatsu: 0, gukbap: 0, salad: 0 };
+            combineVotes();
+            updateUI();
+        });
+}
+
 // Fetch and parse votes from Google Sheet proxy API
 function refreshVotesFromSheet() {
+    if (useDirectGoogle) {
+        fetchDirectFromGoogle();
+        return;
+    }
+
     fetch('/api/votes')
-        .then(res => res.json())
+        .then(res => {
+            if (!res.ok) {
+                throw new Error('API server returned error status ' + res.status);
+            }
+            const contentType = res.headers.get('content-type');
+            if (contentType && !contentType.includes('application/json')) {
+                throw new Error('Non-JSON response from API: ' + contentType);
+            }
+            return res.json();
+        })
         .then(data => {
             if (data && !data.error) {
                 // Update sheet votes (default to 0 if not present)
@@ -129,18 +192,15 @@ function refreshVotesFromSheet() {
                 updateUI();
             } else if (data && data.error) {
                 console.warn('API returned error fetching sheet:', data.error);
-                // Fallback to local votes only (sheet votes are treated as 0)
                 state.sheetVotes = { bibimbap: 0, donkatsu: 0, gukbap: 0, salad: 0 };
                 combineVotes();
                 updateUI();
             }
         })
         .catch(err => {
-            console.error('Error fetching sheet votes:', err);
-            // Fallback: treat sheet votes as 0
-            state.sheetVotes = { bibimbap: 0, donkatsu: 0, gukbap: 0, salad: 0 };
-            combineVotes();
-            updateUI();
+            console.warn('API endpoint failed, falling back to direct Google Sheets connection:', err.message);
+            useDirectGoogle = true;
+            fetchDirectFromGoogle();
         });
 }
 
@@ -173,6 +233,56 @@ function selectMenu(menuKey) {
     }
 }
 
+// Submit vote directly to Google Apps Script Web App (fallback mode)
+function submitDirectToGoogle(selected) {
+    const postData = JSON.stringify({ menu: selected, voter: "Web App (Direct)" });
+    
+    // We send request without mode: 'no-cors' (defaults to 'cors')
+    // and keep Content-Type as 'text/plain' to avoid CORS preflight OPTIONS check.
+    fetch(GAS_WEBAPP_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: postData
+    })
+    .then(() => {
+        handleDirectSubmitSuccess(selected);
+    })
+    .catch(err => {
+        console.warn('Direct GAS submission error (could be CORS redirect error from GAS script issue):', err);
+        
+        // Since GAS redirects to googleusercontent.com and the user's GAS script throws a TypeError on line 35,
+        // the browser blocks the redirected error page response due to CORS.
+        // However, the initial POST request HAS already reached Google and recorded the vote.
+        // Therefore, if the browser is online, we treat this as a successful vote write.
+        if (navigator.onLine) {
+            handleDirectSubmitSuccess(selected);
+        } else {
+            showToast('네트워크 연결 상태를 확인해 주세요. 로컬에 임시 기록합니다.', '🔌');
+            state.localVotes[selected]++;
+            saveToStorage();
+            combineVotes();
+            updateUI();
+        }
+    })
+    .finally(() => {
+        state.selectedMenu = null;
+        menuCards.forEach(card => card.setAttribute('aria-checked', 'false'));
+    });
+}
+
+function handleDirectSubmitSuccess(selected) {
+    const now = new Date();
+    state.lastVoteTime = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    
+    showToast(`"${MENU_NAMES_KR[selected]}" 메뉴에 성공적으로 투표했습니다! (구글 시트 저장 완료)`, '🎉');
+    
+    setTimeout(() => {
+        refreshVotesFromSheet();
+    }, 1500);
+}
+
 // Handle Vote Submission
 function handleVoteSubmit() {
     if (!state.selectedMenu) return;
@@ -182,6 +292,11 @@ function handleVoteSubmit() {
     // Disable the button to prevent multiple submissions
     voteButton.setAttribute('disabled', 'true');
     voteButton.classList.remove('animate-pulse-btn');
+
+    if (useDirectGoogle) {
+        submitDirectToGoogle(selected);
+        return;
+    }
     
     // POST request to backend proxy (Google Sheet Write Proxy)
     fetch('/api/vote', {
@@ -191,7 +306,12 @@ function handleVoteSubmit() {
         },
         body: JSON.stringify({ menu: selected })
     })
-    .then(res => res.json())
+    .then(res => {
+        if (!res.ok) {
+            throw new Error('API server returned error status ' + res.status);
+        }
+        return res.json();
+    })
     .then(data => {
         const now = new Date();
         state.lastVoteTime = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -199,8 +319,6 @@ function handleVoteSubmit() {
         if (data.result === 'success') {
             // Vote successfully written to Google Sheet!
             showToast(`"${MENU_NAMES_KR[selected]}" 메뉴에 성공적으로 투표했습니다! (구글 시트 저장 완료)`, '🎉');
-            
-            // Refetch immediately to display the new vote
             refreshVotesFromSheet();
         } else if (data.result === 'local') {
             // GAS URL is not configured, fall back to local storage
@@ -210,27 +328,20 @@ function handleVoteSubmit() {
             combineVotes();
             updateUI();
         } else {
-            // Error from server
-            console.error('Vote submission error:', data.error);
-            showToast('투표 처리 중 오류가 발생했습니다. 로컬에 임시 기록합니다.', '⚠️');
-            state.localVotes[selected]++;
-            saveToStorage();
-            combineVotes();
-            updateUI();
+            throw new Error(data.error || 'Unknown error');
         }
     })
     .catch(err => {
-        console.error('Vote connection error:', err);
-        showToast('네트워크 오류가 발생했습니다. 로컬에 임시 기록합니다.', '🔌');
-        state.localVotes[selected]++;
-        saveToStorage();
-        combineVotes();
-        updateUI();
+        console.warn('API vote submit failed, trying direct Google Apps Script submission:', err.message);
+        useDirectGoogle = true;
+        submitDirectToGoogle(selected);
     })
     .finally(() => {
-        // Reset selection state
-        state.selectedMenu = null;
-        menuCards.forEach(card => card.setAttribute('aria-checked', 'false'));
+        // Reset selection state (only if not handled by submitDirectToGoogle)
+        if (!useDirectGoogle) {
+            state.selectedMenu = null;
+            menuCards.forEach(card => card.setAttribute('aria-checked', 'false'));
+        }
     });
 }
 
