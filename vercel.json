@@ -1,24 +1,4 @@
 {
   "version": 2,
-  "cleanUrls": true,
-  "functions": {
-    "api/*.js": {
-      "memory": 256,
-      "maxDuration": 10
-    }
-  },
-  "rewrites": [
-    { "source": "/api/votes", "destination": "/api/votes" },
-    { "source": "/api/vote", "destination": "/api/vote" }
-  ],
-  "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
-      ]
-    }
-  ]
+  "outputDirectory": "public"
 }
