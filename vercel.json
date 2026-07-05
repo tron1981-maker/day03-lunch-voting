@@ -1,27 +1,24 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/**/*.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "index.html",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "style.css",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "app.js",
-      "use": "@vercel/static"
+  "cleanUrls": true,
+  "functions": {
+    "api/*.js": {
+      "memory": 256,
+      "maxDuration": 10
     }
+  },
+  "rewrites": [
+    { "source": "/api/votes", "destination": "/api/votes" },
+    { "source": "/api/vote", "destination": "/api/vote" }
   ],
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/style.css", "dest": "/style.css" },
-    { "src": "/app.js", "dest": "/app.js" },
-    { "src": "/(.*)", "dest": "/index.html" }
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
+      ]
+    }
   ]
 }
