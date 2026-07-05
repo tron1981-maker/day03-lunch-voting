@@ -1,0 +1,13 @@
+{
+  "name": "day03-lunch-voting",
+  "version": "1.0.0",
+  "description": "Real-time lunch menu voting screen with Google Sheets database",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}

@@ -22,11 +22,20 @@ function fetchSheetVotes(targetUrl, callback) {
         return;
     }
 
-    https.get(targetUrl, { agent }, (res) => {
+    console.log(`[Serverless Fetch] Fetching from URL: ${targetUrl}`);
+    
+    const req = https.get(targetUrl, { agent }, (res) => {
+        // Handle redirect
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             try {
-                const redirectUrl = new URL(res.headers.location, targetUrl).href;
-                fetchSheetVotes(redirectUrl, callback);
+                const location = res.headers.location;
+                if (typeof location === 'string') {
+                    const redirectUrl = new URL(location, targetUrl).href;
+                    console.log(`[Serverless Redirect] Following redirect to: ${redirectUrl}`);
+                    fetchSheetVotes(redirectUrl, callback);
+                } else {
+                    handleFetchError(new Error('Redirect location header missing'), callback);
+                }
             } catch (e) {
                 handleFetchError(e, callback);
             }
@@ -82,23 +91,32 @@ function fetchSheetVotes(targetUrl, callback) {
                 handleFetchError(err, callback);
             }
         });
-    }).on('error', (err) => {
+    });
+
+    // Set 4-second request timeout to prevent serverless function hangs
+    req.setTimeout(4000, () => {
+        req.destroy(new Error('Fetch timeout exceeded (4000ms)'));
+    });
+
+    req.on('error', (err) => {
         handleFetchError(err, callback);
     });
 }
 
 function handleFetchError(err, callback) {
-    console.error('Error fetching sheet votes in serverless:', err.message);
+    console.error('[Serverless Fetch Error]:', err.message);
     if (votesCache.data) {
+        console.warn('[Serverless Fallback] Serving stale cache data.');
         callback(null, votesCache.data, true);
     } else {
+        console.warn('[Serverless Fallback] No cache found. Returning zero votes.');
         const defaultVotes = { bibimbap: 0, donkatsu: 0, gukbap: 0, salad: 0 };
         callback(null, defaultVotes, false);
     }
 }
 
 module.exports = (req, res) => {
-    // Set CORS headers manually
+    // Set CORS headers
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -124,6 +142,7 @@ module.exports = (req, res) => {
             }));
         });
     } catch (error) {
+        console.error('[Serverless Crash]:', error);
         res.writeHead(500, { 'Content-Type': 'application/json; charset=UTF-8' });
         res.end(JSON.stringify({ result: "error", error: error.toString() }));
     }

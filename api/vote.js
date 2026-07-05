@@ -26,21 +26,26 @@ function submitVoteToGas(targetUrl, menu, callback) {
     const req = https.request(options, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             try {
-                const redirectUrl = new URL(res.headers.location, targetUrl).href;
-                https.get(redirectUrl, { agent }, (redirectRes) => {
-                    let data = '';
-                    redirectRes.on('data', (chunk) => { data += chunk; });
-                    redirectRes.on('end', () => {
-                        try {
-                            const parsed = JSON.parse(data);
-                            callback(null, parsed);
-                        } catch (e) {
-                            callback(e);
-                        }
+                const location = res.headers.location;
+                if (typeof location === 'string') {
+                    const redirectUrl = new URL(location, targetUrl).href;
+                    https.get(redirectUrl, { agent }, (redirectRes) => {
+                        let data = '';
+                        redirectRes.on('data', (chunk) => { data += chunk; });
+                        redirectRes.on('end', () => {
+                            try {
+                                const parsed = JSON.parse(data);
+                                callback(null, parsed);
+                            } catch (e) {
+                                callback(e);
+                            }
+                        });
+                    }).on('error', (err) => {
+                        callback(err);
                     });
-                }).on('error', (err) => {
-                    callback(err);
-                });
+                } else {
+                    callback(new Error('Redirect location header missing in GAS post'));
+                }
             } catch (e) {
                 callback(e);
             }
@@ -59,6 +64,11 @@ function submitVoteToGas(targetUrl, menu, callback) {
                 callback(e);
             }
         });
+    });
+
+    // Set 4-second request timeout to prevent serverless function hangs
+    req.setTimeout(4000, () => {
+        req.destroy(new Error('Vote submit timeout exceeded (4000ms)'));
     });
 
     req.on('error', (err) => {
@@ -97,7 +107,7 @@ function parseRequestBody(req, callback) {
 }
 
 module.exports = (req, res) => {
-    // Set CORS headers manually
+    // Set CORS headers
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -149,6 +159,7 @@ module.exports = (req, res) => {
             }
         });
     } catch (error) {
+        console.error('[Serverless Vote Crash]:', error);
         res.writeHead(500, { 'Content-Type': 'application/json; charset=UTF-8' });
         res.end(JSON.stringify({ result: "error", error: error.toString() }));
     }
