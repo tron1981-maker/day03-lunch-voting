@@ -179,28 +179,59 @@ function handleVoteSubmit() {
 
     const selected = state.selectedMenu;
     
-    // Add vote locally
-    state.localVotes[selected]++;
-    
-    // Update timestamp
-    const now = new Date();
-    state.lastVoteTime = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    
-    // Persist local votes to storage
-    saveToStorage();
-
-    // Show premium toast success message
-    showToast(`"${MENU_NAMES_KR[selected]}" 메뉴에 성공적으로 투표했습니다! (로컬 저장됨)`, '🎉');
-
-    // Reset selection state
-    state.selectedMenu = null;
-    menuCards.forEach(card => card.setAttribute('aria-checked', 'false'));
+    // Disable the button to prevent multiple submissions
     voteButton.setAttribute('disabled', 'true');
     voteButton.classList.remove('animate-pulse-btn');
-
-    // Combine and update UI
-    combineVotes();
-    updateUI();
+    
+    // POST request to backend proxy (Google Sheet Write Proxy)
+    fetch('/api/vote', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ menu: selected })
+    })
+    .then(res => res.json())
+    .then(data => {
+        const now = new Date();
+        state.lastVoteTime = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        
+        if (data.result === 'success') {
+            // Vote successfully written to Google Sheet!
+            showToast(`"${MENU_NAMES_KR[selected]}" 메뉴에 성공적으로 투표했습니다! (구글 시트 저장 완료)`, '🎉');
+            
+            // Refetch immediately to display the new vote
+            refreshVotesFromSheet();
+        } else if (data.result === 'local') {
+            // GAS URL is not configured, fall back to local storage
+            state.localVotes[selected]++;
+            saveToStorage();
+            showToast(`"${MENU_NAMES_KR[selected]}" 메뉴에 투표했습니다! (구글 시트 미연동 - 로컬 저장됨)`, '💡');
+            combineVotes();
+            updateUI();
+        } else {
+            // Error from server
+            console.error('Vote submission error:', data.error);
+            showToast('투표 처리 중 오류가 발생했습니다. 로컬에 임시 기록합니다.', '⚠️');
+            state.localVotes[selected]++;
+            saveToStorage();
+            combineVotes();
+            updateUI();
+        }
+    })
+    .catch(err => {
+        console.error('Vote connection error:', err);
+        showToast('네트워크 오류가 발생했습니다. 로컬에 임시 기록합니다.', '🔌');
+        state.localVotes[selected]++;
+        saveToStorage();
+        combineVotes();
+        updateUI();
+    })
+    .finally(() => {
+        // Reset selection state
+        state.selectedMenu = null;
+        menuCards.forEach(card => card.setAttribute('aria-checked', 'false'));
+    });
 }
 
 // Handle Results Reset

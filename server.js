@@ -2,14 +2,13 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-
 const PORT = 8080;
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1apyIElF6YvBms3pTIYSf2jI1nk1cAv5OVG6GwtBjRps/export?format=csv';
+const GAS_WEBAPP_URL = ''; // Paste your Google Apps Script Web App URL here after deploying
 
 const agent = new https.Agent({
     rejectUnauthorized: false
 });
-
 // Cache state for Google Sheets API protection (Throttling/Caching Best Practice)
 let votesCache = {
     data: null,
@@ -117,6 +116,66 @@ function handleFetchError(err, callback) {
     }
 }
 
+function submitVoteToGas(targetUrl, menu, callback) {
+    const postData = JSON.stringify({ menu: menu, voter: "Web App" });
+    const urlObj = new URL(targetUrl);
+    
+    const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname + urlObj.search,
+        method: 'POST',
+        agent: agent,
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData)
+        }
+    };
+
+    const req = https.request(options, (res) => {
+        // Handle redirect (GAS redirects POST 302, follow as GET is standard for response extraction)
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            try {
+                const redirectUrl = new URL(res.headers.location, targetUrl).href;
+                https.get(redirectUrl, { agent }, (redirectRes) => {
+                    let data = '';
+                    redirectRes.on('data', (chunk) => { data += chunk; });
+                    redirectRes.on('end', () => {
+                        try {
+                            const parsed = JSON.parse(data);
+                            callback(null, parsed);
+                        } catch (e) {
+                            callback(e);
+                        }
+                    });
+                }).on('error', (err) => {
+                    callback(err);
+                });
+            } catch (e) {
+                callback(e);
+            }
+            return;
+        }
+
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+            try {
+                const parsed = JSON.parse(data);
+                callback(null, parsed);
+            } catch (e) {
+                callback(e);
+            }
+        });
+    });
+
+    req.on('error', (err) => {
+        callback(err);
+    });
+
+    req.write(postData);
+    req.end();
+}
+
 const MIME_TYPES = {
     '.html': 'text/html; charset=UTF-8',
     '.css': 'text/css; charset=UTF-8',
@@ -152,6 +211,52 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // Submit new vote endpoint (Google Sheets Write proxy)
+    if (req.method === 'POST' && decodedUrl === '/api/vote') {
+        let body = '';
+        req.on('data', chunk => {
+            body += chunk.toString();
+        });
+        req.on('end', () => {
+            try {
+                const params = JSON.parse(body);
+                const menu = params.menu;
+                
+                if (!ALLOWED_MENUS.includes(menu)) {
+                    res.writeHead(400, { 'Content-Type': 'application/json; charset=UTF-8' });
+                    res.end(JSON.stringify({ result: "error", error: "Invalid menu choice" }));
+                    return;
+                }
+                
+                if (GAS_WEBAPP_URL) {
+                    console.log(`[Google Write] Forwarding vote for '${menu}' to Google Apps Script...`);
+                    submitVoteToGas(GAS_WEBAPP_URL, menu, (err, result) => {
+                        if (err) {
+                            console.error('[Google Write Error] GAS write failed:', err.message);
+                            res.writeHead(500, { 'Content-Type': 'application/json; charset=UTF-8' });
+                            res.end(JSON.stringify({ result: "error", error: err.message }));
+                        } else {
+                            // Invalidate read cache since database has changed!
+                            votesCache.timestamp = 0; 
+                            console.log('[Google Write Success] Vote successfully written. Read cache invalidated.');
+                            res.writeHead(200, { 'Content-Type': 'application/json; charset=UTF-8' });
+                            res.end(JSON.stringify({ result: "success", data: result }));
+                        }
+                    });
+                } else {
+                    res.writeHead(200, { 'Content-Type': 'application/json; charset=UTF-8' });
+                    res.end(JSON.stringify({ 
+                        result: "local", 
+                        message: "GAS WebApp URL이 설정되지 않아 로컬 브라우저에 임시 기록되었습니다." 
+                    }));
+                }
+            } catch (e) {
+                res.writeHead(400, { 'Content-Type': 'application/json; charset=UTF-8' });
+                res.end(JSON.stringify({ result: "error", error: "Malformed request body" }));
+            }
+        });
+        return;
+    }
     let filePath = path.join(__dirname, decodedUrl === '/' ? 'index.html' : decodedUrl);
     
     // Prevent directory traversal
